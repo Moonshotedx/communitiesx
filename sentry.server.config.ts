@@ -4,12 +4,21 @@
 
 import * as Sentry from "@sentry/nextjs";
 
-Sentry.init({
-  dsn: "https://65f44f075eb70ba248bf8b1586a5d610@sentry.xcelerator.co.in/7",
+// Check if Sentry should be enabled
+const shouldEnableSentry =
+  process.env.SENTRY_DISABLED !== "true" &&
+  process.env.NODE_ENV !== "development";
 
-  // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
-  tracesSampleRate: 1,
+if (shouldEnableSentry) {
+  Sentry.init({
+    dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
 
-  // Setting this option to true will print useful information to the console while you're setting up Sentry.
-  debug: false,
-});
+    // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
+    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
+
+    // Setting this option to true will print useful information to the console while you're setting up Sentry.
+    debug: false,
+  })
+} else {
+  console.log("Sentry server initialization skipped")
+}
