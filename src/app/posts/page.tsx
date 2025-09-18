@@ -17,6 +17,7 @@ import {
     CalendarDays,
     ShieldCheck,
 } from 'lucide-react';
+import { LikeButton } from '@/components/ui/like-button';
 import { ShareButton } from '@/components/ui/share-button';
 import { useRouter } from 'next/navigation';
 import type { posts, users, communities, comments } from '@/server/db/schema';
@@ -70,6 +71,8 @@ type PostDisplay = PostFromDb & {
     };
     comments?: CommentFromDb[]; // Properly typed comments array
     tags?: PostTag[]; // Add tags to the type
+    likeCount?: number; // Add like count
+    isLiked?: boolean; // Add user's like status
 };
 
 // Filter state type
@@ -254,7 +257,28 @@ export default function PostsPage() {
                 dateFilter: activeFilters.dateFilter,
             });
 
-            setPosts((prev) => [...prev, ...data.posts]);
+            // Get like counts and user reactions for new posts
+            const newPostIds = data.posts.map((post) => post.id);
+            const [likeCounts, userReactions] = await Promise.all([
+                utils.community.getPostLikeCounts.fetch({
+                    postIds: newPostIds,
+                }),
+                session
+                    ? utils.community.getUserReactions.fetch({
+                          postIds: newPostIds,
+                      })
+                    : Promise.resolve({}),
+            ]);
+
+            const postsWithLikes = data.posts.map((post) => ({
+                ...post,
+                likeCount: (likeCounts as Record<number, number>)[post.id] || 0,
+                isLiked:
+                    (userReactions as Record<number, boolean>)[post.id] ||
+                    false,
+            }));
+
+            setPosts((prev) => [...prev, ...postsWithLikes]);
             setOffset((prev) => prev + data.posts.length);
             setHasNextPage(data.hasNextPage);
             setTotalCount(data.totalCount);
@@ -270,6 +294,8 @@ export default function PostsPage() {
         offset,
         sortOption,
         utils.community.getAllRelevantPosts,
+        utils.community.getPostLikeCounts,
+        utils.community.getUserReactions,
     ]);
 
     // Setup intersection observer for infinite scrolling
@@ -342,6 +368,44 @@ export default function PostsPage() {
             enabled: !!session?.user?.id,
         },
     );
+
+    // Get like counts for all posts
+    const postIds = useMemo(() => posts.map((post) => post.id), [posts]);
+    const likeCountsQuery = trpc.community.getPostLikeCounts.useQuery(
+        { postIds },
+        {
+            enabled: postIds.length > 0,
+            staleTime: 10 * 1000, // Keep fresh enough for others to see updates
+            refetchOnWindowFocus: true,
+            refetchInterval: 10 * 1000, // Light polling to reflect others' likes
+        },
+    );
+
+    // Get user's reaction status for all posts
+    const userReactionsQuery = trpc.community.getUserReactions.useQuery(
+        { postIds },
+        {
+            enabled: postIds.length > 0 && !!session,
+            staleTime: 30 * 1000, // Cache for 30 seconds
+        },
+    );
+
+    // Update posts with like data when like queries change
+    useEffect(() => {
+        if (likeCountsQuery.data || userReactionsQuery.data) {
+            setPosts((prevPosts) =>
+                prevPosts.map((post) => ({
+                    ...post,
+                    likeCount:
+                        likeCountsQuery.data?.[post.id] || post.likeCount || 0,
+                    isLiked:
+                        userReactionsQuery.data?.[post.id] ||
+                        post.isLiked ||
+                        false,
+                })),
+            );
+        }
+    }, [likeCountsQuery.data, userReactionsQuery.data]);
 
     const deletePostMutation = trpc.community.deletePost.useMutation({
         onSuccess: () => {
@@ -761,7 +825,27 @@ export default function PostsPage() {
                                                 post.createdAt,
                                             ).toLocaleDateString()}
                                         </span>
-                                        <div className="ml-4 items-center space-x-4">
+                                        <div className="ml-4 flex flex-row items-center space-x-2">
+                                            {/* Like button - visible for everyone; disabled if not logged in */}
+                                            <div
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                }}
+                                            >
+                                                <LikeButton
+                                                    postId={post.id}
+                                                    initialLikeCount={
+                                                        post.likeCount || 0
+                                                    }
+                                                    initialIsLiked={
+                                                        post.isLiked || false
+                                                    }
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    disabled={!session}
+                                                />
+                                            </div>
                                             <button
                                                 className="text-muted-foreground flex items-center text-xs"
                                                 onClick={(e) => {
@@ -782,7 +866,30 @@ export default function PostsPage() {
 
                                     {/* Action buttons */}
                                     {
-                                        <div className="flex space-x-1">
+                                        <div className="flex items-center space-x-1">
+                                            {/* Like button */}
+                                            {session && (
+                                                <div
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                    }}
+                                                >
+                                                    <LikeButton
+                                                        postId={post.id}
+                                                        initialLikeCount={
+                                                            post.likeCount || 0
+                                                        }
+                                                        initialIsLiked={
+                                                            post.isLiked ||
+                                                            false
+                                                        }
+                                                        size="sm"
+                                                        variant="ghost"
+                                                    />
+                                                </div>
+                                            )}
+
                                             <div
                                                 onClick={(e) => {
                                                     e.preventDefault();

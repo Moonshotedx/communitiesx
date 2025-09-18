@@ -12,6 +12,7 @@ import {
     communityAllowedOrgs,
     tags,
     postTags,
+    reactions,
 } from '@/server/db/schema';
 import { TRPCError } from '@trpc/server';
 import {
@@ -2556,5 +2557,235 @@ export const communityRouter = router({
                 hasNextPage: offset + limit < totalCount,
                 nextOffset: offset + limit < totalCount ? offset + limit : null,
             };
+        }),
+
+    // Like a post
+    likePost: authProcedure
+        .input(z.object({ postId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+            try {
+                const userId = ctx.session.user.id;
+                const { postId } = input;
+
+                // Check if post exists and is not deleted
+                const post = await db.query.posts.findFirst({
+                    where: and(
+                        eq(posts.id, postId),
+                        eq(posts.isDeleted, false),
+                    ),
+                });
+
+                if (!post) {
+                    throw new TRPCError({
+                        code: 'NOT_FOUND',
+                        message: 'Post not found',
+                    });
+                }
+
+                // Check if user already liked this post
+                const existingReaction = await db.query.reactions.findFirst({
+                    where: and(
+                        eq(reactions.postId, postId),
+                        eq(reactions.userId, userId),
+                        eq(reactions.type, 'like'),
+                    ),
+                });
+
+                if (existingReaction) {
+                    throw new TRPCError({
+                        code: 'BAD_REQUEST',
+                        message: 'You have already liked this post',
+                    });
+                }
+
+                // Add the like
+                await db.insert(reactions).values({
+                    postId,
+                    userId,
+                    type: 'like',
+                });
+
+                // Get updated like count
+                const likeCount = await db
+                    .select({ count: count() })
+                    .from(reactions)
+                    .where(
+                        and(
+                            eq(reactions.postId, postId),
+                            eq(reactions.type, 'like'),
+                        ),
+                    );
+
+                return {
+                    success: true,
+                    likeCount: likeCount[0]?.count || 0,
+                };
+            } catch (error) {
+                console.error('Error liking post:', error);
+                if (error instanceof TRPCError) {
+                    throw error;
+                }
+                throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'Failed to like post',
+                });
+            }
+        }),
+
+    // Unlike a post
+    unlikePost: authProcedure
+        .input(z.object({ postId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+            try {
+                const userId = ctx.session.user.id;
+                const { postId } = input;
+
+                // Check if post exists
+                const post = await db.query.posts.findFirst({
+                    where: and(
+                        eq(posts.id, postId),
+                        eq(posts.isDeleted, false),
+                    ),
+                });
+
+                if (!post) {
+                    throw new TRPCError({
+                        code: 'NOT_FOUND',
+                        message: 'Post not found',
+                    });
+                }
+
+                // Check if user has liked this post
+                const existingReaction = await db.query.reactions.findFirst({
+                    where: and(
+                        eq(reactions.postId, postId),
+                        eq(reactions.userId, userId),
+                        eq(reactions.type, 'like'),
+                    ),
+                });
+
+                if (!existingReaction) {
+                    throw new TRPCError({
+                        code: 'BAD_REQUEST',
+                        message: 'You have not liked this post',
+                    });
+                }
+
+                // Remove the like
+                await db
+                    .delete(reactions)
+                    .where(
+                        and(
+                            eq(reactions.postId, postId),
+                            eq(reactions.userId, userId),
+                            eq(reactions.type, 'like'),
+                        ),
+                    );
+
+                // Get updated like count
+                const likeCount = await db
+                    .select({ count: count() })
+                    .from(reactions)
+                    .where(
+                        and(
+                            eq(reactions.postId, postId),
+                            eq(reactions.type, 'like'),
+                        ),
+                    );
+
+                return {
+                    success: true,
+                    likeCount: likeCount[0]?.count || 0,
+                };
+            } catch (error) {
+                console.error('Error unliking post:', error);
+                if (error instanceof TRPCError) {
+                    throw error;
+                }
+                throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'Failed to unlike post',
+                });
+            }
+        }),
+
+    // Get user's reaction status for posts
+    getUserReactions: authProcedure
+        .input(z.object({ postIds: z.array(z.number()) }))
+        .query(async ({ input, ctx }) => {
+            try {
+                const userId = ctx.session.user.id;
+                const { postIds } = input;
+
+                if (postIds.length === 0) {
+                    return {};
+                }
+
+                const userReactions = await db.query.reactions.findMany({
+                    where: and(
+                        inArray(reactions.postId, postIds),
+                        eq(reactions.userId, userId),
+                        eq(reactions.type, 'like'),
+                    ),
+                    columns: {
+                        postId: true,
+                    },
+                });
+
+                // Convert to a map for easy lookup
+                const reactionMap: Record<number, boolean> = {};
+                userReactions.forEach((reaction) => {
+                    reactionMap[reaction.postId] = true;
+                });
+
+                return reactionMap;
+            } catch (error) {
+                console.error('Error getting user reactions:', error);
+                throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'Failed to get user reactions',
+                });
+            }
+        }),
+
+    // Get like counts for posts
+    getPostLikeCounts: publicProcedure
+        .input(z.object({ postIds: z.array(z.number()) }))
+        .query(async ({ input }) => {
+            try {
+                const { postIds } = input;
+
+                if (postIds.length === 0) {
+                    return {};
+                }
+
+                const likeCounts = await db
+                    .select({
+                        postId: reactions.postId,
+                        count: count(),
+                    })
+                    .from(reactions)
+                    .where(
+                        and(
+                            inArray(reactions.postId, postIds),
+                            eq(reactions.type, 'like'),
+                        ),
+                    )
+                    .groupBy(reactions.postId);
+
+                // Convert to a map for easy lookup
+                const countMap: Record<number, number> = {};
+                likeCounts.forEach(({ postId, count }) => {
+                    countMap[postId] = count;
+                });
+
+                return countMap;
+            } catch (error) {
+                console.error('Error getting post like counts:', error);
+                throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'Failed to get post like counts',
+                });
+            }
         }),
 });
