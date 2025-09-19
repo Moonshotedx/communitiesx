@@ -234,16 +234,6 @@ export default function PostsPage() {
         dateFilter: activeFilters.dateFilter,
     });
 
-    // Update posts state when query data changes
-    useEffect(() => {
-        if (postsQuery.data) {
-            setPosts(postsQuery.data.posts);
-            setOffset(postsQuery.data.posts.length);
-            setHasNextPage(postsQuery.data.hasNextPage);
-            setTotalCount(postsQuery.data.totalCount);
-        }
-    }, [postsQuery.data]);
-
     // Function to fetch more posts
     const fetchNextPage = useCallback(async () => {
         if (!session || !hasNextPage || isFetchingNextPage) return;
@@ -272,7 +262,7 @@ export default function PostsPage() {
 
             const postsWithLikes = data.posts.map((post) => ({
                 ...post,
-                likeCount: (likeCounts as Record<number, number>)[post.id] || 0,
+                likeCount: likeCounts[post.id] || 0,
                 isLiked:
                     (userReactions as Record<number, boolean>)[post.id] ||
                     false,
@@ -375,9 +365,10 @@ export default function PostsPage() {
         { postIds },
         {
             enabled: postIds.length > 0,
-            staleTime: 10 * 1000, // Keep fresh enough for others to see updates
+            staleTime: 0, // Always fetch fresh data
             refetchOnWindowFocus: true,
-            refetchInterval: 10 * 1000, // Light polling to reflect others' likes
+            refetchInterval: 5 * 1000, // More frequent polling to reflect others' likes
+            refetchIntervalInBackground: true, // Continue polling even when tab is not active
         },
     );
 
@@ -386,7 +377,10 @@ export default function PostsPage() {
         { postIds },
         {
             enabled: postIds.length > 0 && !!session,
-            staleTime: 30 * 1000, // Cache for 30 seconds
+            staleTime: 0, // Always fetch fresh data
+            refetchOnWindowFocus: true,
+            refetchInterval: 5 * 1000, // More frequent polling to reflect others' likes
+            refetchIntervalInBackground: true, // Continue polling even when tab is not active
         },
     );
 
@@ -396,16 +390,45 @@ export default function PostsPage() {
             setPosts((prevPosts) =>
                 prevPosts.map((post) => ({
                     ...post,
-                    likeCount:
-                        likeCountsQuery.data?.[post.id] || post.likeCount || 0,
-                    isLiked:
-                        userReactionsQuery.data?.[post.id] ||
-                        post.isLiked ||
-                        false,
+                    likeCount: likeCountsQuery.data?.[post.id] ?? 0,
+                    isLiked: userReactionsQuery.data?.[post.id] ?? false,
                 })),
             );
         }
     }, [likeCountsQuery.data, userReactionsQuery.data]);
+
+    // Memoize refetch functions to prevent dependency array changes
+    const refetchLikeCounts = useCallback(() => {
+        utils.community.getPostLikeCounts.refetch();
+    }, [utils.community.getPostLikeCounts]);
+
+    const refetchUserReactions = useCallback(() => {
+        utils.community.getUserReactions.refetch();
+    }, [utils.community.getUserReactions]);
+
+    // Update posts when the initial posts query data changes
+    useEffect(() => {
+        if (postsQuery.data) {
+            // Only update posts if we don't have any posts yet or if the data is significantly different
+            setPosts((prevPosts) => {
+                if (prevPosts.length === 0) {
+                    return postsQuery.data.posts;
+                }
+                return prevPosts;
+            });
+            setOffset(postsQuery.data.posts.length);
+            setHasNextPage(postsQuery.data.hasNextPage);
+            setTotalCount(postsQuery.data.totalCount);
+
+            // Immediately refetch like data when posts are loaded
+            if (postsQuery.data.posts.length > 0) {
+                refetchLikeCounts();
+                if (session) {
+                    refetchUserReactions();
+                }
+            }
+        }
+    }, [postsQuery.data, session, refetchLikeCounts, refetchUserReactions]);
 
     const deletePostMutation = trpc.community.deletePost.useMutation({
         onSuccess: () => {
@@ -438,7 +461,8 @@ export default function PostsPage() {
         }
     };
 
-    const isLoading = postsQuery.isLoading;
+    const isLoading =
+        postsQuery.isLoading || (posts.length > 0 && !likeCountsQuery.data);
 
     const stats = statsQuery.data || {
         totalUsers: 0,
@@ -867,29 +891,6 @@ export default function PostsPage() {
                                     {/* Action buttons */}
                                     {
                                         <div className="flex items-center space-x-1">
-                                            {/* Like button */}
-                                            {session && (
-                                                <div
-                                                    onClick={(e) => {
-                                                        e.preventDefault();
-                                                        e.stopPropagation();
-                                                    }}
-                                                >
-                                                    <LikeButton
-                                                        postId={post.id}
-                                                        initialLikeCount={
-                                                            post.likeCount || 0
-                                                        }
-                                                        initialIsLiked={
-                                                            post.isLiked ||
-                                                            false
-                                                        }
-                                                        size="sm"
-                                                        variant="ghost"
-                                                    />
-                                                </div>
-                                            )}
-
                                             <div
                                                 onClick={(e) => {
                                                     e.preventDefault();

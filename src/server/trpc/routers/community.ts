@@ -2582,44 +2582,51 @@ export const communityRouter = router({
                     });
                 }
 
-                // Check if user already liked this post
-                const existingReaction = await db.query.reactions.findFirst({
-                    where: and(
-                        eq(reactions.postId, postId),
-                        eq(reactions.userId, userId),
-                        eq(reactions.type, 'like'),
-                    ),
-                });
-
-                if (existingReaction) {
-                    throw new TRPCError({
-                        code: 'BAD_REQUEST',
-                        message: 'You have already liked this post',
-                    });
-                }
-
-                // Add the like
-                await db.insert(reactions).values({
-                    postId,
-                    userId,
-                    type: 'like',
-                });
-
-                // Get updated like count
-                const likeCount = await db
-                    .select({ count: count() })
-                    .from(reactions)
-                    .where(
-                        and(
-                            eq(reactions.postId, postId),
-                            eq(reactions.type, 'like'),
-                        ),
+                // Use transaction to prevent race conditions
+                const result = await db.transaction(async (tx) => {
+                    // Check if user already liked this post
+                    const existingReaction = await tx.query.reactions.findFirst(
+                        {
+                            where: and(
+                                eq(reactions.postId, postId),
+                                eq(reactions.userId, userId),
+                                eq(reactions.type, 'like'),
+                            ),
+                        },
                     );
 
-                return {
-                    success: true,
-                    likeCount: likeCount[0]?.count || 0,
-                };
+                    if (existingReaction) {
+                        throw new TRPCError({
+                            code: 'BAD_REQUEST',
+                            message: 'You have already liked this post',
+                        });
+                    }
+
+                    // Add the like
+                    await tx.insert(reactions).values({
+                        postId,
+                        userId,
+                        type: 'like',
+                    });
+
+                    // Get updated like count
+                    const likeCount = await tx
+                        .select({ count: count() })
+                        .from(reactions)
+                        .where(
+                            and(
+                                eq(reactions.postId, postId),
+                                eq(reactions.type, 'like'),
+                            ),
+                        );
+
+                    return {
+                        success: true,
+                        likeCount: likeCount[0]?.count || 0,
+                    };
+                });
+
+                return result;
             } catch (error) {
                 console.error('Error liking post:', error);
                 if (error instanceof TRPCError) {
@@ -2655,48 +2662,55 @@ export const communityRouter = router({
                     });
                 }
 
-                // Check if user has liked this post
-                const existingReaction = await db.query.reactions.findFirst({
-                    where: and(
-                        eq(reactions.postId, postId),
-                        eq(reactions.userId, userId),
-                        eq(reactions.type, 'like'),
-                    ),
+                // Use transaction to prevent race conditions
+                const result = await db.transaction(async (tx) => {
+                    // Check if user has liked this post
+                    const existingReaction = await tx.query.reactions.findFirst(
+                        {
+                            where: and(
+                                eq(reactions.postId, postId),
+                                eq(reactions.userId, userId),
+                                eq(reactions.type, 'like'),
+                            ),
+                        },
+                    );
+
+                    if (!existingReaction) {
+                        throw new TRPCError({
+                            code: 'BAD_REQUEST',
+                            message: 'You have not liked this post',
+                        });
+                    }
+
+                    // Remove the like
+                    await tx
+                        .delete(reactions)
+                        .where(
+                            and(
+                                eq(reactions.postId, postId),
+                                eq(reactions.userId, userId),
+                                eq(reactions.type, 'like'),
+                            ),
+                        );
+
+                    // Get updated like count
+                    const likeCount = await tx
+                        .select({ count: count() })
+                        .from(reactions)
+                        .where(
+                            and(
+                                eq(reactions.postId, postId),
+                                eq(reactions.type, 'like'),
+                            ),
+                        );
+
+                    return {
+                        success: true,
+                        likeCount: likeCount[0]?.count || 0,
+                    };
                 });
 
-                if (!existingReaction) {
-                    throw new TRPCError({
-                        code: 'BAD_REQUEST',
-                        message: 'You have not liked this post',
-                    });
-                }
-
-                // Remove the like
-                await db
-                    .delete(reactions)
-                    .where(
-                        and(
-                            eq(reactions.postId, postId),
-                            eq(reactions.userId, userId),
-                            eq(reactions.type, 'like'),
-                        ),
-                    );
-
-                // Get updated like count
-                const likeCount = await db
-                    .select({ count: count() })
-                    .from(reactions)
-                    .where(
-                        and(
-                            eq(reactions.postId, postId),
-                            eq(reactions.type, 'like'),
-                        ),
-                    );
-
-                return {
-                    success: true,
-                    likeCount: likeCount[0]?.count || 0,
-                };
+                return result;
             } catch (error) {
                 console.error('Error unliking post:', error);
                 if (error instanceof TRPCError) {

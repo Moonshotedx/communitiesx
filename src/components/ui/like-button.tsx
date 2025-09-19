@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ThumbsUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { trpc } from '@/providers/trpc-provider';
@@ -27,28 +27,34 @@ export function LikeButton({
 }: LikeButtonProps) {
     const [isLiked, setIsLiked] = useState(initialIsLiked);
     const [likeCount, setLikeCount] = useState(initialLikeCount);
-    const [isLoading, setIsLoading] = useState(false);
+
+    // Update state when props change (e.g., on refresh)
+    useEffect(() => {
+        setIsLiked(initialIsLiked);
+        setLikeCount(initialLikeCount);
+    }, [initialIsLiked, initialLikeCount]);
 
     const utils = trpc.useUtils();
 
     const likeMutation = trpc.community.likePost.useMutation({
         onMutate: () => {
             // Optimistic update
+            const previousState = { isLiked, likeCount };
             setIsLiked(true);
             setLikeCount((prev) => prev + 1);
-            setIsLoading(true);
+            return { previousState };
         },
         onSuccess: (data) => {
             setLikeCount(data.likeCount);
-            setIsLoading(false);
-            // Refresh counts cache for this post
-            utils.community.getPostLikeCounts.invalidate({ postIds: [postId] });
+            // Refresh counts cache for all posts
+            utils.community.getPostLikeCounts.invalidate();
         },
-        onError: () => {
+        onError: (error, variables, context) => {
             // Revert optimistic update on error
-            setIsLiked(false);
-            setLikeCount((prev) => prev - 1);
-            setIsLoading(false);
+            if (context?.previousState) {
+                setIsLiked(context.previousState.isLiked);
+                setLikeCount(context.previousState.likeCount);
+            }
         },
     });
 
@@ -57,21 +63,20 @@ export function LikeButton({
             // Optimistic update
             setIsLiked(false);
             setLikeCount((prev) => Math.max(0, prev - 1));
-            setIsLoading(true);
         },
         onSuccess: (data) => {
             setLikeCount(data.likeCount);
-            setIsLoading(false);
-            // Refresh counts cache for this post
-            utils.community.getPostLikeCounts.invalidate({ postIds: [postId] });
+            // Refresh counts cache for all posts
+            utils.community.getPostLikeCounts.invalidate();
         },
         onError: () => {
             // Revert optimistic update on error
             setIsLiked(true);
             setLikeCount((prev) => prev + 1);
-            setIsLoading(false);
         },
     });
+
+    const isLoading = likeMutation.isPending || unlikeMutation.isPending;
 
     const handleLike = () => {
         if (isLoading || disabled) return;
@@ -96,10 +101,9 @@ export function LikeButton({
     };
 
     return (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center">
             <Button
                 variant={variant}
-                size="sm"
                 onClick={handleLike}
                 disabled={isLoading || disabled}
                 className={cn(

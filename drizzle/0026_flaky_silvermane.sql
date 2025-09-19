@@ -1,0 +1,1 @@
+ALTER TABLE "reactions" ADD CONSTRAINT "unique_user_post_type" UNIQUE("post_id","user_id","type");
