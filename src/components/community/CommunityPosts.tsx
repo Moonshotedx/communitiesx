@@ -13,10 +13,14 @@ import {
     Trash2,
 } from 'lucide-react';
 import { ShareButton } from '@/components/ui/share-button';
+import { LikeButton } from '@/components/ui/like-button';
 import Link from 'next/link';
 import { UserProfilePopover } from '@/components/ui/user-profile-popover';
 import { SafeHtml } from '@/lib/sanitize';
 import { DateFilter, type DateFilterState } from '@/components/date-filter';
+import { trpc } from '@/providers/trpc-provider';
+import { useSession } from '@/server/auth/client';
+import { useMemo, useEffect, useState, useCallback } from 'react';
 
 interface CommunityPostsProps {
     community: any;
@@ -57,10 +61,85 @@ export function CommunityPosts({
     canDeletePost,
     router,
 }: CommunityPostsProps) {
+    const sessionData = useSession();
+    const session = sessionData.data;
+    const [postsWithLikes, setPostsWithLikes] = useState<any[]>([]);
+    const utils = trpc.useUtils();
+
+    // Get like counts for all posts
+    const postIds = useMemo(
+        () => filteredPosts.map((post) => post.id),
+        [filteredPosts],
+    );
+    const likeCountsQuery = trpc.community.getPostLikeCounts.useQuery(
+        { postIds },
+        {
+            enabled: postIds.length > 0,
+            staleTime: 0, // Always fetch fresh data
+            refetchOnWindowFocus: true,
+            refetchInterval: 5 * 1000, // More frequent polling to reflect others' likes
+            refetchIntervalInBackground: true, // Continue polling even when tab is not active
+        },
+    );
+
+    // Get user's reaction status for all posts
+    const userReactionsQuery = trpc.community.getUserReactions.useQuery(
+        { postIds },
+        {
+            enabled: postIds.length > 0 && !!session,
+            staleTime: 0, // Always fetch fresh data
+            refetchOnWindowFocus: true,
+            refetchInterval: 5 * 1000, // More frequent polling to reflect others' likes
+            refetchIntervalInBackground: true, // Continue polling even when tab is not active
+        },
+    );
+
+    // Update posts with like data when like queries change
+    useEffect(() => {
+        if (likeCountsQuery.data || userReactionsQuery.data) {
+            setPostsWithLikes(
+                filteredPosts.map((post) => ({
+                    ...post,
+                    likeCount: likeCountsQuery.data?.[post.id] ?? 0,
+                    isLiked: userReactionsQuery.data?.[post.id] ?? false,
+                })),
+            );
+        } else {
+            setPostsWithLikes(filteredPosts);
+        }
+    }, [filteredPosts, likeCountsQuery.data, userReactionsQuery.data]);
+
+    // Memoize refetch functions to prevent dependency array changes
+    const refetchLikeCounts = useCallback(() => {
+        utils.community.getPostLikeCounts.refetch();
+    }, [utils.community.getPostLikeCounts]);
+
+    const refetchUserReactions = useCallback(() => {
+        utils.community.getUserReactions.refetch();
+    }, [utils.community.getUserReactions]);
+
+    // Refetch like data when filtered posts change
+    useEffect(() => {
+        if (filteredPosts.length > 0) {
+            refetchLikeCounts();
+            if (session) {
+                refetchUserReactions();
+            }
+        }
+    }, [
+        filteredPosts.length,
+        session,
+        refetchLikeCounts,
+        refetchUserReactions,
+    ]);
+    // Check if we're still loading like data
+    const isLikeDataLoading =
+        postsWithLikes.length > 0 && !likeCountsQuery.data;
+
     return (
         <TabsContent value="posts" className="mt-0 space-y-6">
             {/* Show loading skeleton while data is being fetched */}
-            {isLoading ? (
+            {isLoading || isLikeDataLoading ? (
                 <div className="space-y-4">
                     {[...Array(3)].map((_, index) => (
                         <Card key={index} className="relative gap-2 py-2">
@@ -196,193 +275,240 @@ export function CommunityPosts({
                     )}
 
                     {/* Render posts for members */}
-                    {isMember && filteredPosts && filteredPosts.length > 0 && (
-                        <div className="space-y-4">
-                            {filteredPosts.map((post: any) => (
-                                <Link
-                                    key={post.id}
-                                    href={`/communities/${community.slug}/posts/${post.id}`}
-                                    className="block"
-                                    style={{
-                                        textDecoration: 'none',
-                                    }}
-                                >
-                                    <Card className="relative gap-2 py-2 transition-shadow hover:shadow-md">
-                                        {/* Post content */}
-                                        <div className="px-4 py-0">
-                                            {/* Post title */}
-                                            <h3 className="mt-0 mb-2 text-base font-medium">
-                                                {post.isDeleted
-                                                    ? '[Deleted]'
-                                                    : post.title}
-                                            </h3>
-
+                    {isMember &&
+                        postsWithLikes &&
+                        postsWithLikes.length > 0 && (
+                            <div className="space-y-4">
+                                {postsWithLikes.map((post: any) => (
+                                    <Link
+                                        key={post.id}
+                                        href={`/communities/${community.slug}/posts/${post.id}`}
+                                        className="block"
+                                        style={{
+                                            textDecoration: 'none',
+                                        }}
+                                    >
+                                        <Card className="relative gap-2 py-2 transition-shadow hover:shadow-md">
                                             {/* Post content */}
-                                            {post.isDeleted ? (
-                                                <div className="space-y-1">
-                                                    <span className="text-muted-foreground text-sm italic">
-                                                        [Content deleted]
-                                                    </span>
-                                                    <span className="text-muted-foreground block text-xs">
-                                                        Removed on{' '}
-                                                        {new Date(
-                                                            post.updatedAt,
-                                                        ).toLocaleString()}
-                                                    </span>
-                                                </div>
-                                            ) : (
-                                                <div className="text-muted-foreground text-sm">
-                                                    <SafeHtml
-                                                        html={post.content}
-                                                        className="line-clamp-2 overflow-hidden leading-5 text-ellipsis"
-                                                    />
-                                                </div>
-                                            )}
+                                            <div className="px-4 py-0">
+                                                {/* Post title */}
+                                                <h3 className="mt-0 mb-2 text-base font-medium">
+                                                    {post.isDeleted
+                                                        ? '[Deleted]'
+                                                        : post.title}
+                                                </h3>
 
-                                            {/* Tags display */}
-                                            {post.tags &&
-                                                post.tags.length > 0 && (
-                                                    <div className="mt-2 flex flex-wrap gap-1">
-                                                        {post.tags
-                                                            .slice(0, 3)
-                                                            .map((tag: any) => (
-                                                                <span
-                                                                    key={tag.id}
-                                                                    className="bg-secondary inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
-                                                                    style={{
-                                                                        backgroundColor:
-                                                                            tag.color
-                                                                                ? `${tag.color}20`
-                                                                                : undefined,
-                                                                        color:
-                                                                            tag.color ||
-                                                                            undefined,
-                                                                    }}
-                                                                >
-                                                                    {tag.name}
-                                                                </span>
-                                                            ))}
-                                                        {post.tags.length >
-                                                            3 && (
-                                                            <span className="bg-secondary text-muted-foreground inline-flex items-center rounded-full px-2 py-1 text-xs font-medium">
-                                                                +
-                                                                {post.tags
-                                                                    .length -
-                                                                    3}{' '}
-                                                                more
-                                                            </span>
-                                                        )}
+                                                {/* Post content */}
+                                                {post.isDeleted ? (
+                                                    <div className="space-y-1">
+                                                        <span className="text-muted-foreground text-sm italic">
+                                                            [Content deleted]
+                                                        </span>
+                                                        <span className="text-muted-foreground block text-xs">
+                                                            Removed on{' '}
+                                                            {new Date(
+                                                                post.updatedAt,
+                                                            ).toLocaleString()}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-muted-foreground text-sm">
+                                                        <SafeHtml
+                                                            html={post.content}
+                                                            className="line-clamp-2 overflow-hidden leading-5 text-ellipsis"
+                                                        />
                                                     </div>
                                                 )}
 
-                                            {/* Post metadata */}
-                                            <div className="mt-3 flex items-center justify-between">
-                                                <div className="flex items-center">
-                                                    <span className="text-muted-foreground text-xs">
-                                                        Posted by{' '}
-                                                        {post.author?.id ? (
-                                                            <UserProfilePopover
-                                                                userId={
-                                                                    post.author
-                                                                        .id
-                                                                }
-                                                            >
-                                                                <span className="cursor-pointer hover:underline">
-                                                                    {post.author
-                                                                        ?.name ||
-                                                                        'Unknown'}
+                                                {/* Tags display */}
+                                                {post.tags &&
+                                                    post.tags.length > 0 && (
+                                                        <div className="mt-2 flex flex-wrap gap-1">
+                                                            {post.tags
+                                                                .slice(0, 3)
+                                                                .map(
+                                                                    (
+                                                                        tag: any,
+                                                                    ) => (
+                                                                        <span
+                                                                            key={
+                                                                                tag.id
+                                                                            }
+                                                                            className="bg-secondary inline-flex items-center rounded-full px-2 py-1 text-xs font-medium"
+                                                                            style={{
+                                                                                backgroundColor:
+                                                                                    tag.color
+                                                                                        ? `${tag.color}20`
+                                                                                        : undefined,
+                                                                                color:
+                                                                                    tag.color ||
+                                                                                    undefined,
+                                                                            }}
+                                                                        >
+                                                                            {
+                                                                                tag.name
+                                                                            }
+                                                                        </span>
+                                                                    ),
+                                                                )}
+                                                            {post.tags.length >
+                                                                3 && (
+                                                                <span className="bg-secondary text-muted-foreground inline-flex items-center rounded-full px-2 py-1 text-xs font-medium">
+                                                                    +
+                                                                    {post.tags
+                                                                        .length -
+                                                                        3}{' '}
+                                                                    more
                                                                 </span>
-                                                            </UserProfilePopover>
-                                                        ) : (
-                                                            'Unknown'
-                                                        )}{' '}
-                                                        •{' '}
-                                                        {new Date(
-                                                            post.createdAt,
-                                                        ).toLocaleDateString()}
-                                                    </span>
-                                                    <div className="ml-4 items-center space-x-4">
-                                                        <button
-                                                            className="text-muted-foreground flex items-center text-xs"
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                {/* Post metadata */}
+                                                <div className="mt-3 flex items-center justify-between">
+                                                    <div className="flex items-center">
+                                                        <span className="text-muted-foreground text-xs">
+                                                            Posted by{' '}
+                                                            {post.author?.id ? (
+                                                                <UserProfilePopover
+                                                                    userId={
+                                                                        post
+                                                                            .author
+                                                                            .id
+                                                                    }
+                                                                >
+                                                                    <span className="cursor-pointer hover:underline">
+                                                                        {post
+                                                                            .author
+                                                                            ?.name ||
+                                                                            'Unknown'}
+                                                                    </span>
+                                                                </UserProfilePopover>
+                                                            ) : (
+                                                                'Unknown'
+                                                            )}{' '}
+                                                            •{' '}
+                                                            {new Date(
+                                                                post.createdAt,
+                                                            ).toLocaleDateString()}
+                                                        </span>
+                                                        <div className="ml-4 flex flex-row items-center space-x-2">
+                                                            {/* Like button - visible for everyone; disabled if not logged in */}
+                                                            <div
+                                                                onClick={(
+                                                                    e,
+                                                                ) => {
+                                                                    e.preventDefault();
+                                                                    e.stopPropagation();
+                                                                }}
+                                                            >
+                                                                <LikeButton
+                                                                    postId={
+                                                                        post.id
+                                                                    }
+                                                                    initialLikeCount={
+                                                                        post.likeCount ||
+                                                                        0
+                                                                    }
+                                                                    initialIsLiked={
+                                                                        post.isLiked ||
+                                                                        false
+                                                                    }
+                                                                    size="sm"
+                                                                    variant="ghost"
+                                                                    disabled={
+                                                                        !session
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                className="text-muted-foreground flex items-center text-xs"
+                                                                onClick={(
+                                                                    e,
+                                                                ) => {
+                                                                    e.preventDefault();
+                                                                    e.stopPropagation();
+                                                                    router.push(
+                                                                        `/communities/${community.slug}/posts/${post.id}`,
+                                                                    );
+                                                                }}
+                                                            >
+                                                                <MessageSquare className="mr-1 h-3 w-3" />
+                                                                {Array.isArray(
+                                                                    post.comments,
+                                                                )
+                                                                    ? post
+                                                                          .comments
+                                                                          .length
+                                                                    : 0}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Action buttons */}
+                                                    <div className="flex items-center space-x-1">
+                                                        <div
                                                             onClick={(e) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
-                                                                router.push(
-                                                                    `/communities/${community.slug}/posts/${post.id}`,
-                                                                );
                                                             }}
                                                         >
-                                                            <MessageSquare className="mr-1 h-3 w-3" />
-                                                            {Array.isArray(
-                                                                post.comments,
-                                                            )
-                                                                ? post.comments
-                                                                      .length
-                                                                : 0}
-                                                        </button>
+                                                            <ShareButton
+                                                                title={
+                                                                    post.title
+                                                                }
+                                                                text={`Check out this post: ${post.title}`}
+                                                                url={`${typeof window !== 'undefined' ? window.location.origin : ''}/communities/${community.slug}/posts/${post.id}`}
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="text-muted-foreground hover:bg-accent hover:text-foreground rounded-full p-1.5"
+                                                            />
+                                                        </div>
+                                                        {canEditPost(post) && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(
+                                                                    e: React.MouseEvent,
+                                                                ) => {
+                                                                    e.preventDefault();
+                                                                    e.stopPropagation();
+                                                                    router.push(
+                                                                        `/communities/${community.slug}/posts/${post.id}/edit`,
+                                                                    );
+                                                                }}
+                                                                className="text-muted-foreground hover:bg-accent hover:text-foreground rounded-full p-1.5"
+                                                            >
+                                                                <Edit className="h-4 w-4" />
+                                                            </button>
+                                                        )}
+                                                        {canDeletePost(
+                                                            post,
+                                                        ) && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) =>
+                                                                    onDeletePost(
+                                                                        post.id,
+                                                                        e,
+                                                                    )
+                                                                }
+                                                                className="text-muted-foreground hover:bg-accent hover:text-destructive rounded-full p-1.5"
+                                                            >
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </button>
+                                                        )}
                                                     </div>
-                                                </div>
-
-                                                {/* Action buttons */}
-                                                <div className="flex space-x-1">
-                                                    <div
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                        }}
-                                                    >
-                                                        <ShareButton
-                                                            title={post.title}
-                                                            text={`Check out this post: ${post.title}`}
-                                                            url={`${typeof window !== 'undefined' ? window.location.origin : ''}/communities/${community.slug}/posts/${post.id}`}
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="text-muted-foreground hover:bg-accent hover:text-foreground rounded-full p-1.5"
-                                                        />
-                                                    </div>
-                                                    {canEditPost(post) && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(
-                                                                e: React.MouseEvent,
-                                                            ) => {
-                                                                e.preventDefault();
-                                                                e.stopPropagation();
-                                                                router.push(
-                                                                    `/communities/${community.slug}/posts/${post.id}/edit`,
-                                                                );
-                                                            }}
-                                                            className="text-muted-foreground hover:bg-accent hover:text-foreground rounded-full p-1.5"
-                                                        >
-                                                            <Edit className="h-4 w-4" />
-                                                        </button>
-                                                    )}
-                                                    {canDeletePost(post) && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) =>
-                                                                onDeletePost(
-                                                                    post.id,
-                                                                    e,
-                                                                )
-                                                            }
-                                                            className="text-muted-foreground hover:bg-accent hover:text-destructive rounded-full p-1.5"
-                                                        >
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </button>
-                                                    )}
                                                 </div>
                                             </div>
-                                        </div>
-                                    </Card>
-                                </Link>
-                            ))}
-                        </div>
-                    )}
+                                        </Card>
+                                    </Link>
+                                ))}
+                            </div>
+                        )}
 
                     {/* Empty state for members */}
                     {isMember &&
-                        (!filteredPosts || filteredPosts.length === 0) && (
+                        (!postsWithLikes || postsWithLikes.length === 0) && (
                             <div className="py-12 text-center">
                                 <Building className="text-muted-foreground mx-auto mb-4 h-12 w-12 opacity-50" />
                                 <p className="text-muted-foreground">

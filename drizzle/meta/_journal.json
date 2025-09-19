@@ -183,6 +183,13 @@
             "when": 1756108193232,
             "tag": "0025_black_old_lace",
             "breakpoints": true
+        },
+        {
+            "idx": 26,
+            "version": "7",
+            "when": 1758284736066,
+            "tag": "0026_flaky_silvermane",
+            "breakpoints": true
         }
     ]
 }

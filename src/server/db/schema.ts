@@ -8,6 +8,7 @@ import {
     primaryKey,
     varchar,
     jsonb,
+    unique,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -185,17 +186,30 @@ export const comments = pgTable('comments', {
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-export const reactions = pgTable('reactions', {
-    id: serial('id').primaryKey(),
-    postId: integer('post_id')
-        .notNull()
-        .references(() => posts.id, { onDelete: 'cascade' }),
-    userId: text('user_id')
-        .notNull()
-        .references(() => users.id, { onDelete: 'cascade' }),
-    type: text('type').notNull(),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+export const reactions = pgTable(
+    'reactions',
+    {
+        id: serial('id').primaryKey(),
+        postId: integer('post_id')
+            .notNull()
+            .references(() => posts.id, { onDelete: 'cascade' }),
+        userId: text('user_id')
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        type: text('type').notNull(),
+        createdAt: timestamp('created_at').notNull().defaultNow(),
+    },
+    (table) => {
+        return {
+            // Unique constraint to prevent duplicate reactions from the same user on the same post
+            uniqueUserPostType: unique('unique_user_post_type').on(
+                table.postId,
+                table.userId,
+                table.type,
+            ),
+        };
+    },
+);
 
 // Define relations
 export const communitiesRelations = relations(communities, ({ one, many }) => ({
