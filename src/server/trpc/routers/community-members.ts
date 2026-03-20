@@ -8,11 +8,36 @@ import {
     communities,
 } from '@/server/db/schema';
 import { and, desc, eq } from 'drizzle-orm';
+import { ServerPermissions } from '@/server/utils/permission';
+import { PERMISSIONS } from '@/lib/permissions/permission-const';
+
+async function requireCommunityManagePermission(
+    userId: string,
+    communityId: number,
+) {
+    const permission = await ServerPermissions.fromUserId(userId);
+    const canManage = await permission.checkCommunityPermission(
+        communityId.toString(),
+        PERMISSIONS.MANAGE_COMMUNITY_MEMBERS,
+    );
+    if (!canManage) {
+        throw new TRPCError({
+            code: 'FORBIDDEN',
+            message:
+                'You do not have permission to manage members in this community',
+        });
+    }
+}
 
 export const memberProcedures = {
     getPendingRequests: authProcedure
         .input(z.object({ communityId: z.number() }))
         .query(async ({ input, ctx }) => {
+            await requireCommunityManagePermission(
+                ctx.session.user.id,
+                input.communityId,
+            );
+
             const pendingRequests =
                 await db.query.communityMemberRequests.findMany({
                     where: and(
@@ -49,6 +74,12 @@ export const memberProcedures = {
                     message: 'Request not found',
                 });
             }
+
+            await requireCommunityManagePermission(
+                ctx.session.user.id,
+                request.communityId,
+            );
+
             if (request.status !== 'pending') {
                 throw new TRPCError({
                     code: 'BAD_REQUEST',
@@ -98,6 +129,12 @@ export const memberProcedures = {
                     message: 'Request not found',
                 });
             }
+
+            await requireCommunityManagePermission(
+                ctx.session.user.id,
+                request.communityId,
+            );
+
             if (request.status !== 'pending') {
                 throw new TRPCError({
                     code: 'BAD_REQUEST',
@@ -117,7 +154,12 @@ export const memberProcedures = {
 
     removeUserFromCommunity: authProcedure
         .input(z.object({ communityId: z.number(), userId: z.string() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+            await requireCommunityManagePermission(
+                ctx.session.user.id,
+                input.communityId,
+            );
+
             const community = await db.query.communities.findFirst({
                 where: eq(communities.id, input.communityId),
                 with: { members: true },

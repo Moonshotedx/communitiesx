@@ -84,9 +84,11 @@ export const auth = betterAuth({
             'https://communities-three.vercel.app/',
             'https://communities-git-pwa-fix-ranjan-bhats-projects.vercel.app/',
             'https://communities-git-pwa-fix-ranjan-bhats-projects.vercel.app',
-            '*',
             'https://communities-git-dev-ranjan-bhats-projects.vercel.app',
             'https://communities-git-dev-ranjan-bhats-projects.vercel.app/',
+            ...(process.env.NEXT_PUBLIC_APP_URL
+                ? [process.env.NEXT_PUBLIC_APP_URL]
+                : []),
         ],
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -147,9 +149,8 @@ export const auth = betterAuth({
                 after: async (session, ctx) => {
                     // Insert a login event on successful session creation
                     const { db } = await import('@/server/db');
-                    const { loginEvents } = await import(
-                        '@/server/db/auth-schema'
-                    );
+                    const { loginEvents } =
+                        await import('@/server/db/auth-schema');
                     const { nanoid } = await import('nanoid');
                     await db.insert(loginEvents).values({
                         id: nanoid(),

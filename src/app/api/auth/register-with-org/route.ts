@@ -33,45 +33,40 @@ export async function POST(request: Request) {
 
         // Check if token is provided, verify it
         if (token) {
-            // Special case for the specific token from the error
-            if (token === 'vWUkk9g13hqTc5YQpY6URxKPR3ue-0qR') {
-                // Continue with registration
-            } else {
-                // Get all verification records for this email
-                const allVerifications = await db.query.verifications.findMany({
-                    where: eq(verifications.identifier, email),
-                });
+            // Get all verification records for this email
+            const allVerifications = await db.query.verifications.findMany({
+                where: eq(verifications.identifier, email),
+            });
 
-                if (allVerifications.length === 0) {
-                    return NextResponse.json(
-                        { error: 'No invitation found for this email' },
-                        { status: 400 },
-                    );
-                }
+            if (allVerifications.length === 0) {
+                return NextResponse.json(
+                    { error: 'No invitation found for this email' },
+                    { status: 400 },
+                );
+            }
 
-                // Try to find a matching token in any of the verification records
-                let tokenFound = false;
+            // Try to find a matching token in any of the verification records
+            let tokenFound = false;
 
-                for (const verification of allVerifications) {
-                    try {
-                        const parsedValue = JSON.parse(verification.value);
+            for (const verification of allVerifications) {
+                try {
+                    const parsedValue = JSON.parse(verification.value);
 
-                        if (parsedValue.token === token) {
-                            tokenFound = true;
-                            break;
-                        }
-                    } catch (e) {
-                        console.error('Error parsing verification value:', e);
-                        // Continue checking other records
+                    if (parsedValue.token === token) {
+                        tokenFound = true;
+                        break;
                     }
+                } catch (e) {
+                    console.error('Error parsing verification value:', e);
+                    // Continue checking other records
                 }
+            }
 
-                if (!tokenFound) {
-                    return NextResponse.json(
-                        { error: 'Invalid invitation token' },
-                        { status: 400 },
-                    );
-                }
+            if (!tokenFound) {
+                return NextResponse.json(
+                    { error: 'Invalid invitation token' },
+                    { status: 400 },
+                );
             }
         }
 
@@ -148,11 +143,7 @@ export async function POST(request: Request) {
     } catch (error) {
         console.error('Error during registration:', error);
         return NextResponse.json(
-            {
-                error: 'Registration failed',
-                details:
-                    error instanceof Error ? error.message : 'Unknown error',
-            },
+            { error: 'Registration failed' },
             { status: 500 },
         );
     }
