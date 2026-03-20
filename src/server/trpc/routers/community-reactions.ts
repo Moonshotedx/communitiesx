@@ -157,7 +157,7 @@ export const reactionProcedures = {
 
     // Get user's reaction status for posts
     getUserReactions: authProcedure
-        .input(z.object({ postIds: z.array(z.number()) }))
+        .input(z.object({ postIds: z.array(z.number()).max(100) }))
         .query(async ({ input, ctx }) => {
             try {
                 const userId = ctx.session.user.id;
@@ -192,7 +192,7 @@ export const reactionProcedures = {
 
     // Get like counts for posts
     getPostLikeCounts: publicProcedure
-        .input(z.object({ postIds: z.array(z.number()) }))
+        .input(z.object({ postIds: z.array(z.number()).max(100) }))
         .query(async ({ input }) => {
             try {
                 const { postIds } = input;

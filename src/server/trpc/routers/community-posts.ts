@@ -30,7 +30,7 @@ export const postProcedures = {
             z
                 .object({
                     title: z.string().min(1).max(200).optional(),
-                    content: z.string(),
+                    content: z.string().max(50000),
                     communityId: z.number().nullable().optional(),
                     orgId: z.string().optional().nullable(),
                     tagIds: z.array(z.number()).optional(),
@@ -322,9 +322,8 @@ export const postProcedures = {
 
                     // Create Q&A configuration if provided
                     if (input.qa) {
-                        const { qaQuestions } = await import(
-                            '@/server/db/schema'
-                        );
+                        const { qaQuestions } =
+                            await import('@/server/db/schema');
                         await tx.insert(qaQuestions).values({
                             postId: post.id,
                             answersVisibleAt: input.qa.answersVisibleAt || null,

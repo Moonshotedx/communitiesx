@@ -57,31 +57,40 @@ export const chatRouter = router({
                 },
             });
 
-            // Get unread message counts for each thread
-            const threadsWithUnreadCounts = await Promise.all(
-                threads.map(async (thread) => {
-                    const unreadCount = await db
-                        .select({ count: sql<number>`count(*)` })
-                        .from(directMessages)
-                        .where(
-                            and(
-                                eq(directMessages.threadId, thread.id),
-                                eq(directMessages.recipientId, userId),
-                                eq(directMessages.isRead, false),
-                            ),
-                        );
+            // Get unread message counts in a single aggregated query
+            const threadIds = threads.map((t) => t.id);
+            const unreadCountMap: Record<number, number> = {};
 
-                    // Determine the other user in the conversation
-                    const otherUser =
-                        thread.user1Id === userId ? thread.user2 : thread.user1;
+            if (threadIds.length > 0) {
+                const unreadCounts = await db
+                    .select({
+                        threadId: directMessages.threadId,
+                        count: sql<number>`count(*)`,
+                    })
+                    .from(directMessages)
+                    .where(
+                        and(
+                            inArray(directMessages.threadId, threadIds),
+                            eq(directMessages.recipientId, userId),
+                            eq(directMessages.isRead, false),
+                        ),
+                    )
+                    .groupBy(directMessages.threadId);
 
-                    return {
-                        ...thread,
-                        unreadCount: unreadCount[0]?.count || 0,
-                        otherUser,
-                    };
-                }),
-            );
+                for (const row of unreadCounts) {
+                    unreadCountMap[row.threadId] = row.count;
+                }
+            }
+
+            const threadsWithUnreadCounts = threads.map((thread) => {
+                const otherUser =
+                    thread.user1Id === userId ? thread.user2 : thread.user1;
+                return {
+                    ...thread,
+                    unreadCount: unreadCountMap[thread.id] ?? 0,
+                    otherUser,
+                };
+            });
 
             return threadsWithUnreadCounts;
         } catch (error) {

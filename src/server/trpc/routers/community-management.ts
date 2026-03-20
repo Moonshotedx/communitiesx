@@ -124,6 +124,17 @@ export const managementProcedures = {
                 if (error instanceof TRPCError) {
                     throw error;
                 }
+                // Handle unique constraint violation on slug (race condition safety net)
+                if (
+                    error instanceof Error &&
+                    'code' in error &&
+                    (error as any).code === '23505'
+                ) {
+                    throw new TRPCError({
+                        code: 'BAD_REQUEST',
+                        message: 'Community URL is already taken',
+                    });
+                }
                 console.error('Error creating community:', error);
                 throw new TRPCError({
                     code: 'INTERNAL_SERVER_ERROR',

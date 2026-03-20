@@ -11,7 +11,7 @@ export const commentProcedures = {
         .input(
             z.object({
                 postId: z.number(),
-                content: z.string().min(1),
+                content: z.string().min(1).max(10000),
                 parentId: z.number().optional(),
             }),
         )
@@ -32,7 +32,7 @@ export const commentProcedures = {
                 .values({
                     content: input.content,
                     postId: input.postId,
-                    authorId: ctx.session?.user?.id ?? '',
+                    authorId: ctx.session.user.id,
                     parentId: input.parentId,
                     createdAt: new Date(),
                     updatedAt: new Date(),
@@ -51,7 +51,12 @@ export const commentProcedures = {
 
     // Update a comment
     updateComment: authProcedure
-        .input(z.object({ commentId: z.number(), content: z.string().min(1) }))
+        .input(
+            z.object({
+                commentId: z.number(),
+                content: z.string().min(1).max(10000),
+            }),
+        )
         .mutation(async ({ input, ctx }) => {
             const commentToUpdate = await db.query.comments.findFirst({
                 where: eq(comments.id, input.commentId),
@@ -99,9 +104,33 @@ export const commentProcedures = {
                 });
             }
 
-            // Author can always delete; higher-level permission checks remain in main router where needed
+            // Author can always delete their own comments
             if (commentToDelete.authorId !== ctx.session.user.id) {
-                // Keep stricter checks in the original implementation if needed
+                // Check if user is a community moderator/admin
+                const communityId = commentToDelete.post?.communityId;
+                if (communityId) {
+                    const { ServerPermissions } =
+                        await import('@/server/utils/permission');
+                    const permission = await ServerPermissions.fromUserId(
+                        ctx.session.user.id,
+                    );
+                    const canManage = await permission.checkCommunityPermission(
+                        communityId.toString(),
+                        'delete_post',
+                    );
+                    if (!canManage) {
+                        throw new TRPCError({
+                            code: 'FORBIDDEN',
+                            message:
+                                'You do not have permission to delete this comment',
+                        });
+                    }
+                } else {
+                    throw new TRPCError({
+                        code: 'FORBIDDEN',
+                        message: 'You can only delete your own comments',
+                    });
+                }
             }
 
             const [updatedComment] = await db
@@ -115,7 +144,7 @@ export const commentProcedures = {
 
     // Get helpful vote counts for comments
     getCommentHelpfulCounts: publicProcedure
-        .input(z.object({ commentIds: z.array(z.number()) }))
+        .input(z.object({ commentIds: z.array(z.number()).max(100) }))
         .query(async ({ input }) => {
             if (input.commentIds.length === 0)
                 return {} as Record<number, number>;
@@ -137,7 +166,7 @@ export const commentProcedures = {
 
     // Get user's helpful votes for comments
     getUserHelpfulVotes: publicProcedure
-        .input(z.object({ commentIds: z.array(z.number()) }))
+        .input(z.object({ commentIds: z.array(z.number()).max(100) }))
         .query(async ({ input, ctx }) => {
             if (input.commentIds.length === 0 || !ctx.session?.user?.id) {
                 return {} as Record<number, boolean>;
@@ -176,37 +205,48 @@ export const commentProcedures = {
                 });
             }
 
-            const existingVote = await db.query.commentHelpfulVotes.findFirst({
-                where: and(
-                    eq(commentHelpfulVotes.commentId, input.commentId),
-                    eq(commentHelpfulVotes.userId, ctx.session.user.id),
-                ),
-            });
-
-            if (existingVote) {
-                await db
-                    .delete(commentHelpfulVotes)
-                    .where(
-                        and(
+            const result = await db.transaction(async (tx) => {
+                const existingVote =
+                    await tx.query.commentHelpfulVotes.findFirst({
+                        where: and(
                             eq(commentHelpfulVotes.commentId, input.commentId),
                             eq(commentHelpfulVotes.userId, ctx.session.user.id),
                         ),
-                    );
-            } else {
-                await db.insert(commentHelpfulVotes).values({
-                    commentId: input.commentId,
-                    userId: ctx.session.user.id,
-                });
-            }
+                    });
 
-            const newCount = await db
-                .select({ count: count() })
-                .from(commentHelpfulVotes)
-                .where(eq(commentHelpfulVotes.commentId, input.commentId));
+                if (existingVote) {
+                    await tx
+                        .delete(commentHelpfulVotes)
+                        .where(
+                            and(
+                                eq(
+                                    commentHelpfulVotes.commentId,
+                                    input.commentId,
+                                ),
+                                eq(
+                                    commentHelpfulVotes.userId,
+                                    ctx.session.user.id,
+                                ),
+                            ),
+                        );
+                } else {
+                    await tx.insert(commentHelpfulVotes).values({
+                        commentId: input.commentId,
+                        userId: ctx.session.user.id,
+                    });
+                }
 
-            return {
-                helpfulCount: newCount[0]?.count || 0,
-                isHelpful: !existingVote,
-            } as const;
+                const newCount = await tx
+                    .select({ count: count() })
+                    .from(commentHelpfulVotes)
+                    .where(eq(commentHelpfulVotes.commentId, input.commentId));
+
+                return {
+                    helpfulCount: newCount[0]?.count ?? 0,
+                    isHelpful: !existingVote,
+                } as const;
+            });
+
+            return result;
         }),
 };
